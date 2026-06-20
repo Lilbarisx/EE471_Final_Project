@@ -1,0 +1,33 @@
+\section{System Architecture}
+
+\begin{frame}{Edge-Cloud Hybrid Architecture}
+    \begin{columns}
+        \begin{column}{0.5\textwidth}
+            \textbf{Edge \& Local ML Server (Flask)}
+            \begin{itemize}
+                \item Runs locally on PC with GPU.
+                \item \textbf{Whisper-tiny:} Local voice transcription.
+                \item \textbf{SmolLM2-360M:} Fast local LLM reasoning.
+                \item \textbf{OCR Engine:} Extracts text from captured images.
+            \end{itemize}
+        \end{column}
+        
+        \begin{column}{0.5\textwidth}
+            \textbf{Cloud Backend (AWS EC2 \& S3)}
+            \begin{itemize}
+                \item Deployed in Docker containers.
+                \item \textbf{Django Web Framework:} API gateway for profile management.
+                \item \textbf{AWS S3 Storage:} Saves captured images.
+                \item \textbf{Database (SQLite/PostgreSQL):} User health profiles \& scan logs.
+            \end{itemize}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+\begin{frame}{DevOps \& EE471 Concept Alignment}
+    \begin{itemize}
+        \item \textbf{Containerization:} The cloud backend runs inside Docker containers, ensuring environment consistency.
+        \item \textbf{CI/CD Pipeline:} Automated GitHub Actions workflow builds Docker images, runs lint/testing, and deploys directly to the AWS VM.
+        \item \textbf{Hybrid Concept:} Low-latency heavy AI runs on the Edge (Flask local GPU), while lightweight persistent metadata is managed in the Cloud (AWS EC2 Django).
+    \end{itemize}
+\end{frame}
