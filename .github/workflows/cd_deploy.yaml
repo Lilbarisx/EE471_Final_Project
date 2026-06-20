@@ -23,7 +23,7 @@ jobs:
           script: |
             # If repo doesn't exist on VM, clone it. Otherwise, pull.
             if [ ! -d "~/VoxMed" ]; then
-              git clone https://github.com/Lilbarisx/VoxMed.git ~/VoxMed
+              git clone https://github.com/Lilbarisx/EE471_Final_Project.git ~/VoxMed
             fi
             
             cd ~/VoxMed
