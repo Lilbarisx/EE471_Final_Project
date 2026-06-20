@@ -39,3 +39,7 @@
 *.zip
 *.tar.gz
 *.log
+
+# Presentation files
+Proposal_Sunum/
+
