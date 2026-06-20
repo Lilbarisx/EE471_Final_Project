@@ -1,3 +1,10 @@
+# 1.0.0 (2026-06-20)
+
+
+### Bug Fixes
+
+* update repository URL and GITHUB_TOKEN in workflows ([e959785](https://github.com/Lilbarisx/EE471_Final_Project/commit/e959785bef9521411a0965c26a7d59e9fb290a7b))
+
 ## [1.0.1](https://github.com/Lilbarisx/EE471_MP4/compare/v1.0.0...v1.0.1) (2026-06-07)
 
 
