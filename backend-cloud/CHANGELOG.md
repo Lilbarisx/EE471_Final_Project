@@ -1,3 +1,10 @@
+## [1.0.2](https://github.com/Lilbarisx/EE471_Final_Project/compare/v1.0.1...v1.0.2) (2026-06-27)
+
+
+### Bug Fixes
+
+* run docker-compose with sudo to avoid permission denied on docker.sock ([d5ec13f](https://github.com/Lilbarisx/EE471_Final_Project/commit/d5ec13f8cfdb1b061aa25c407df0e0ff5e3543be))
+
 ## [1.0.1](https://github.com/Lilbarisx/EE471_Final_Project/compare/v1.0.0...v1.0.1) (2026-06-27)
 
 
