@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/Lilbarisx/EE471_Final_Project/compare/v1.0.0...v1.0.1) (2026-06-27)
+
+
+### Bug Fixes
+
+* use docker-compose (V1) instead of docker compose ([e7a2322](https://github.com/Lilbarisx/EE471_Final_Project/commit/e7a2322d66b8c5e46a65081dce16b82e41b4c3bb))
+
 # 1.0.0 (2026-06-20)
 
 
