@@ -1,3 +1,9 @@
+import socket
+orig_getaddrinfo = socket.getaddrinfo
+def getaddrinfo_ipv4(host, port, family=0, type=0, proto=0, flags=0):
+    return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+socket.getaddrinfo = getaddrinfo_ipv4
+
 from flask import Flask, request, jsonify
 from transformers import pipeline
 import torch
@@ -9,9 +15,19 @@ import threading
 from io import BytesIO
 from PIL import Image
 import numpy as np
-import easyocr
+import json
+import ollama
+
+try:
+    from rapidocr_onnxruntime import RapidOCR
+except ImportError:
+    from rapidocr import RapidOCR
 
 warnings.filterwarnings('ignore')
+
+import re
+
+# Removed legacy Turkish character normalization functions. Ollama handles language correction natively.
 
 app = Flask(__name__)
 
@@ -26,38 +42,38 @@ def after_request(response):
 class VoxMedEngine:
     def __init__(self):
         print("Initializing VoxMedEngine...")
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        # Force CPU for speech-to-text to avoid CUDA conflicts with Ollama
+        self.device = "cpu"
         print(f"Using device: {self.device}")
 
-        # OCR Engine Initialization (supports Turkish, English, Croatian/Slovenian)
-        print("Loading EasyOCR Reader...")
-        self.ocr_reader = easyocr.Reader(['tr', 'en', 'hr'])
-
-        # Speech to text (Whisper-tiny)
-        print("Loading Whisper-tiny model...")
+        # OCR Engine Initialization
+        print("Loading RapidOCR...")
         try:
-            self.stt = pipeline("automatic-speech-recognition", model="openai/whisper-tiny", device=self.device)
+            from rapidocr_onnxruntime import RapidOCR
+        except ImportError:
+            from rapidocr import RapidOCR
+        self.ocr_reader = RapidOCR()
+
+        # Speech to text (Whisper-base)
+        print("Loading Whisper-base model...")
+        try:
+            self.stt = pipeline("automatic-speech-recognition", model="openai/whisper-base", device=self.device)
         except Exception as e:
             print(f"Error loading Whisper model, falling back to CPU: {e}")
-            self.stt = pipeline("automatic-speech-recognition", model="openai/whisper-tiny", device="cpu")
-
-        # Text Generation (SmolLM2-360M-Instruct)
-        print("Loading SmolLM2-360M-Instruct model...")
-        try:
-            self.llm = pipeline("text-generation", model="HuggingFaceTB/SmolLM2-360M-Instruct", device=self.device)
-        except Exception as e:
-            print(f"Error loading LLM model, falling back to CPU: {e}")
-            self.llm = pipeline("text-generation", model="HuggingFaceTB/SmolLM2-360M-Instruct", device="cpu")
+            self.stt = pipeline("automatic-speech-recognition", model="openai/whisper-base", device="cpu")
 
         print("Models loaded successfully.")
         self.chat_history = []
+        self.last_scanned_text = None
 
     def extract_text(self, image_bytes):
         try:
             img = Image.open(io.BytesIO(image_bytes))
             img_np = np.array(img)
-            result = self.ocr_reader.readtext(img_np, detail=0)
-            return " ".join(result).strip()
+            output = self.ocr_reader(img_np)
+            if output and output.txts:
+                return " ".join(output.txts).strip()
+            return ""
         except Exception as e:
             return f"OCR Error: {e}"
 
@@ -79,9 +95,10 @@ class VoxMedEngine:
             if rms < 0.01:
                 return "Sessizlik algılandı. Lütfen daha sesli konuşun."
                 
-            # Whisper handles language detection automatically when language is omitted
+            # Force Turkish language for transcription
             result = self.stt(
                 {"raw": audio_data, "sampling_rate": 16000}, 
+                generate_kwargs={"language": "turkish", "task": "transcribe"},
                 return_timestamps=True
             )
             return result['text'].strip()
@@ -92,82 +109,127 @@ class VoxMedEngine:
         if not scanned_text:
             return {"safe": True, "explanation": "Okunacak metin bulunamadı."}
             
+        clean_allergies = allergies.strip() if (allergies and allergies.strip()) else ""
+        clean_medications = medications.strip() if (medications and medications.strip()) else ""
+        
+        # Eşleşme kontrolüne gerek yok: Eğer kullanıcının hiç alerjisi ve ilacı yoksa doğrudan güvenlidir
+        if not clean_allergies and not clean_medications:
+            return {
+                "safe": True,
+                "explanation": "Sağlık profilinizde tanımlı herhangi bir aktif alerjen veya ilaç bulunmamaktadır. Bu ürünü güvenle tüketebilirsiniz."
+            }
+            
         system_instructions = (
-            "You are VoxMed, a medical and food safety AI assistant. "
-            "Analyze the product ingredients text for conflicts with the user's health profile (allergies, existing medications). "
-            "Do not suggest consumption if there is any mismatch. "
-            "Return your assessment strictly in the following format:\n"
-            "SAFE: [YES or NO]\n"
-            "WARNING: [Provide a concise, clear warning in Turkish explaining any allergen conflicts or drug interactions. If safe, write a short Turkish summary of what the product is.]"
+            "Sen VoxMed adında profesyonel bir Alerji ve Besin Öğeleri Kontrol Asistanısın. Görevin, sana beslenecek olan ham OCR çıktısını analiz etmek, metindeki alerjenleri ve besin değerlerini kullanıcının sağlığı için doğrulamaktır.\n\n"
+            "Süreci şu 4 adıma göre yürüt:\n"
+            "1. OCR ve Türkçe Karakter Restorasyonu: Sana gelen metin ham bir OCR çıktısı olduğu için bozuk karakterler, eksik harfler ve bitişik kelimeler içerebilir. Öncelikle bağlama göre bu hataları zihninde düzelt (örn: 'kvam artnci' -> 'kıvam arttırıcı', 'aroma veric (ilek)' -> 'aroma verici (çilek)', 'pancar șekeri' -> 'pancar şekeri', 'ya9' -> 'yağ'). Yanıtlarında ve analizinde her zaman bu kelimelerin düzeltilmiş, temiz Türkçe hallerini kullan. Eğer diğer dillerde de içerik varsa onları da içindekiler belirlemede kullanabilirsin. Çıktı yine Türkçe şekilde olsun.\n"
+            "2. Alerjen Kontrolü: Düzeltilen içerik listesini, kullanıcının aktif alerjen listesiyle karşılaştır. Net eşleşmelerin yanı sıra, bu alerjenlerin tüm türevlerini ve gizli kaynaklarını da (örn: süt yerine süt tozu, peynir altı suyu, kazein; kakao yerine kakao kitlesi, kakao yağı; gluten yerine buğday unu, nişasta) titizlikle tespit et.\n"
+            "ÇOK ÖNEMLİ KURAL: YALNIZCA KULLANICININ AKTİF ALERJEN LİSTESİNDE YER ALAN MADDELER (veya türevleri) ÜRÜNDE VARSA ürünü tehlikeli ('safe': false) yapmalı ve uyarmalısın. Kullanıcının aktif alerjen listesinde yer almayan diğer genel alerjenler (örn: kullanıcı süt alerjisi belirtmediyse süt, gluten belirtmediyse buğday) ürünün içinde olsa dahi ürünü KULLANICI İÇİN TAMAMEN GÜVENLİ (safe: true) kabul etmelisin. Kendiliğinden genel alerji uyarıları yapıp 'tüketmeyin' uyarısı yapma. Güvenliği sadece kullanıcının listesine göre doğrula.\n"
+            "3. Besin Değerleri ve Matematiksel Mantık Kontrolü: OCR metni içindeki enerji, besin öğelerini ve bileşen oranlarını (yüzdelerini) ayıkla. Gıda etiketlerindeki toplam bileşen yüzdesi matematiksel olarak %100'ü geçemez. Eğer OCR çıktısında mantıksız yüzdeler (örn: '%159', '%200') veya bozuk sayılar görürsen, bunu bir OCR okuma hatası (örn: noktayı/virgülü kaçırma, %1.5 veya %15'i yanlış okuma) olduğunu fark et. Yanıtında kullanıcıya bu matematiksel mantıksızlığı/hatayı açıkla ve olası gerçek değeri şeklinde mantık yürüterek belirt.\n"
+            "4. Kesinlik ve Yanıt Kuralları:\n"
+            "- Son derece kesin (precise), öz, analitik ve net ol.\n"
+            "- Gereksiz nezaket cümleleri veya uzatılmış paragraflar kullanma, doğrudan bulguları listele.\n"
+            "- Sadece sana verilen OCR metnine sadık kal, metinde olmayan besin değerlerini veya içerikleri kendinden uydurma (halüsinasyon görme).\n"
+            "- Eğer OCR metni tamamen okunamaz veya çok kopuksa, kullanıcıyı kibarca uyar.\n"
+            "- Kullanıcı eğer konu dışına sapmaya başlarsa, üründen alakasız sorular sorarsa soruları cevaplama ve kullanıcıyı görevin hakkında hatırlatarak uyar.\n\n"
+            "Görevin, ürünün tüketiminin kullanıcı için güvenli olup olmadığını belirlemektir. Yanıtını mutlaka aşağıdaki JSON formatında ver:\n"
+            "{\n"
+            "  \"safe\": true veya false (güvenliyse true, tehlikeliyse false),\n"
+            "  \"explanation\": \"Neden güvenli veya tehlikeli olduğuna dair net, kısa, Türkçe bir açıklama.\"\n"
+            "}\n"
+            "Not: Sadece belirtilen JSON formatında yanıt ver, başka hiçbir açıklama veya metin ekleme."
         )
         
-        user_message = (
-            f"User Health Profile:\n"
-            f"- Allergies: {allergies}\n"
-            f"- Current Medications: {medications}\n\n"
-            f"Scanned ingredients text:\n{scanned_text}"
+        user_allergens = clean_allergies if clean_allergies else "Hiç yok (Boş)"
+        user_medications = clean_medications if clean_medications else "Hiç yok (Boş)"
+        user_prompt = (
+            f"Kullanıcı Alerjileri: {user_allergens}\n"
+            f"Kullanıcı İlaçları: {user_medications}\n"
+            f"Taranan Ürün İçeriği: {scanned_text}"
         )
         
-        conversation = [
-            {"role": "system", "content": system_instructions},
-            {"role": "user", "content": user_message}
-        ]
-        
-        prompt = self.llm.tokenizer.apply_chat_template(
-            conversation, tokenize=False, add_generation_prompt=True
-        )
-        
-        outputs = self.llm(prompt, max_new_tokens=200, do_sample=True, top_p=0.9, temperature=0.3)
-        response_text = outputs[0]["generated_text"][len(prompt):].strip()
-        print(f"Raw LLM Response: {response_text}")
-        
-        safe_status = True
-        if "SAFE: NO" in response_text or "SAFE: No" in response_text or "safe: no" in response_text.lower():
-            safe_status = False
+        try:
+            response = ollama.chat(
+                model='gemma4:e2b',
+                messages=[
+                    {"role": "system", "content": system_instructions},
+                    {"role": "user", "content": user_prompt}
+                ]
+            )
+            content = response['message']['content'].strip()
             
-        warning_text = ""
-        if "WARNING:" in response_text:
-            warning_text = response_text.split("WARNING:")[1].strip()
-        else:
-            warning_text = response_text.replace("SAFE: YES", "").replace("SAFE: NO", "").replace("SAFE: Yes", "").replace("SAFE: No", "").strip()
-            
-        return {
-            "safe": safe_status,
-            "explanation": warning_text
-        }
+            # Strip markdown code blocks if generated
+            if content.startswith("```"):
+                lines = content.splitlines()
+                if len(lines) > 1 and (lines[0].startswith("```json") or lines[0].startswith("```")):
+                    lines = lines[1:]
+                if lines and lines[-1].strip() == "```":
+                    lines = lines[:-1]
+                content = "\n".join(lines).strip()
+                
+            result = json.loads(content)
+            return {
+                "safe": bool(result.get("safe", True)),
+                "explanation": str(result.get("explanation", ""))
+            }
+        except Exception as e:
+            print(f"Error in analyze_safety LLM call: {e}")
+            return {
+                "safe": True,
+                "explanation": f"Analiz sırasında bir hata oluştu: {e}"
+            }
 
     def chat(self, user_message, scanned_text, allergies, medications):
         if not user_message: 
             return ""
             
-        # We inject the scan context to help the chat model answer follow-up questions
-        context_message = (
-            f"SYSTEM CONTEXT:\n"
-            f"User Allergies: {allergies}\n"
-            f"User Medications: {medications}\n"
-            f"Last Scanned Product ingredients: {scanned_text}\n"
-            f"Please answer the user's follow-up questions in Turkish based on this context."
+        # Clear history if product has changed
+        if self.last_scanned_text != scanned_text:
+            self.chat_history = []
+            self.last_scanned_text = scanned_text
+            
+        chat_system = (
+            "Sen VoxMed adında profesyonel bir Alerji ve Besin Öğeleri Kontrol Asistanısın. Görevin, taranan ürün içeriğini analiz etmek, kullanıcının sorularını yanıtlamak ve sağlık profilini korumaktır.\n\n"
+            "Süreci şu 4 adıma göre yürüt:\n"
+            "1. OCR ve Türkçe Karakter Restorasyonu: Sana gelen metin ham bir OCR çıktısı olduğu için bozuk karakterler, eksik harfler ve bitişik kelimeler içerebilir. Öncelikle bağlama göre bu hataları zihninde düzelt (örn: 'kvam artnci' -> 'kıvam arttırıcı', 'aroma veric (ilek)' -> 'aroma verici (çilek)', 'pancar șekeri' -> 'pancar şekeri', 'ya9' -> 'yağ'). Yanıtlarında ve analizinde her zaman bu kelimelerin düzeltilmiş, temiz Türkçe hallerini kullan. Eğer diğer dillerde de içerik varsa onları da içindekiler belirlemede kullanabilirsin. Çıktı yine Türkçe şekilde olsun.\n"
+            "2. Alerjen Kontrolü: Düzeltilen içerik listesini, kullanıcının aktif alerjen listesiyle karşılaştır. Net eşleşmelerin yanı sıra, bu alerjenlerin tüm türevlerini ve gizli kaynaklarını da (örn: süt yerine süt tozu, peynir altı suyu, kazein; kakao yerine kakao kitlesi, kakao yağı; gluten yerine buğday unu, nişasta) titizlikle tespit et ve kullanıcıyı açıkça uyar.\n"
+            "3. Besin Değerleri ve Matematiksel Mantık Kontrolü: OCR metni içindeki enerji, besin öğelerini ve bileşen oranlarını (yüzdelerini) ayıkla. Gıda etiketlerindeki toplam bileşen yüzdesi matematiksel olarak %100'ü geçemez. Eğer OCR çıktısında mantıksız yüzdeler (örn: '%159', '%200') veya bozuk sayılar görürsen, bunu bir OCR okuma hatası (örn: noktayı/virgülü kaçırma, %1.5 veya %15'i yanlış okuma) olduğunu fark et. Yanıtında kullanıcıya bu matematiksel mantıksızlığı/hatayı açıkla ve olası gerçek değeri şeklinde mantık yürüterek belirt.\n"
+            "4. Kesinlik ve Yanıt Kuralları:\n"
+            "- Son derece kesin (precise), öz, analitik ve net ol.\n"
+            "- Gereksiz nezaket cümleleri veya uzatılmış paragraflar kullanma, doğrudan bulguları listele.\n"
+            "- Sadece sana verilen OCR metnine sadık kal, metinde olmayan besin değerlerini veya içerikleri kendinden uydurma (halüsinasyon görme).\n"
+            "- Eğer OCR metni tamamen okunamaz veya çok kopuksa, kullanıcıyı kibarca uyar.\n"
+            "- Kullanıcı eğer konu dışına sapmaya başlarsa, üründen alakasız sorular sorarsa soruları cevaplama ve kullanıcıyı görevin hakkında hatırlatarak nazikçe uyar.\n\n"
+            f"Kullanıcı Alerjileri: {allergies}\n"
+            f"Kullanıcı İlaçları: {medications}\n"
+            f"Taranan Ürün İçeriği: {scanned_text}\n"
         )
         
         chat_flow = [
-            {"role": "system", "content": context_message}
+            {"role": "system", "content": chat_system}
         ]
         
-        # Append message history
-        self.chat_history.append({"role": "user", "content": user_message})
+        # Append past clean history
+        chat_flow.extend(self.chat_history[-6:])
         
-        # Keep history compact for SmolLM2 context window
-        recent_history = self.chat_history[-6:]
-        chat_flow.extend(recent_history)
+        # Append the user's message
+        chat_flow.append({"role": "user", "content": user_message})
         
-        prompt = self.llm.tokenizer.apply_chat_template(
-            chat_flow, tokenize=False, add_generation_prompt=True
-        )
-        
-        outputs = self.llm(prompt, max_new_tokens=150, do_sample=True, top_p=0.9, temperature=0.7)
-        response_text = outputs[0]["generated_text"][len(prompt):].strip()
-        self.chat_history.append({"role": "assistant", "content": response_text})
-        return response_text
+        try:
+            response = ollama.chat(
+                model='gemma4:e2b',
+                messages=chat_flow
+            )
+            response_text = response['message']['content'].strip()
+            
+            # Save only the CLEAN version to chat history
+            self.chat_history.append({"role": "user", "content": user_message})
+            self.chat_history.append({"role": "assistant", "content": response_text})
+            
+            return response_text
+        except Exception as e:
+            print(f"Error in chat LLM call: {e}")
+            return f"Sohbet sırasında bir hata oluştu: {e}"
 
 # Background Initialization State
 engine = None
@@ -252,4 +314,4 @@ def transcribe_endpoint():
 if __name__ == '__main__':
     # Start loading models in the background so Flask starts instantly
     threading.Thread(target=load_engine_background, daemon=True).start()
-    app.run(host='0.0.0.0', port=7860, debug=False)
+    app.run(host='0.0.0.0', port=7861, debug=False)

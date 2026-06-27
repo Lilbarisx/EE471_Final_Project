@@ -105,6 +105,10 @@ class _VoxMedHomeState extends State<VoxMedHome> with SingleTickerProviderStateM
         onStatus: (status) {
           if (status == 'done' || status == 'notListening') {
             setState(() => _isListening = false);
+            // Auto-send recognized text if any
+            if (_chatController.text.trim().isNotEmpty) {
+              _sendChatMessage();
+            }
           }
         },
         onError: (error) {
@@ -114,7 +118,7 @@ class _VoxMedHomeState extends State<VoxMedHome> with SingleTickerProviderStateM
       
       // Setup TTS language to Turkish
       await _flutterTts.setLanguage("tr-TR");
-      await _flutterTts.setSpeechRate(0.85); // Speak slightly slower for clarity
+      await _flutterTts.setSpeechRate(0.52); // Natural and clear speed
       setState(() {});
     } catch (e) {
       debugPrint("STT/TTS Initialization error: $e");
@@ -135,6 +139,7 @@ class _VoxMedHomeState extends State<VoxMedHome> with SingleTickerProviderStateM
           _chatController.text = result.recognizedWords;
         });
       },
+      localeId: "tr-TR",
     );
     setState(() => _isListening = true);
   }
@@ -291,7 +296,7 @@ class _VoxMedHomeState extends State<VoxMedHome> with SingleTickerProviderStateM
           'allergies': _allergies,
           'medications': _medications
         }),
-      ).timeout(const Duration(seconds: 30));
+      ).timeout(const Duration(seconds: 60));
 
       if (analyzeRes.statusCode == 200) {
         final analyzeData = jsonDecode(analyzeRes.body);
@@ -357,7 +362,7 @@ class _VoxMedHomeState extends State<VoxMedHome> with SingleTickerProviderStateM
           'allergies': _allergies,
           'medications': _medications
         }),
-      ).timeout(const Duration(seconds: 25));
+      ).timeout(const Duration(seconds: 60));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -694,12 +699,13 @@ class _VoxMedHomeState extends State<VoxMedHome> with SingleTickerProviderStateM
               const SizedBox(width: 8),
               // Mic Icon Button
               GestureDetector(
-                onTapDown: (_) {
-                  if (_speechEnabled) _startListening();
-                },
-                onTapUp: (_) {
-                  if (_speechEnabled) _stopListening();
-                  _sendChatMessage();
+                onTap: () {
+                  if (!_speechEnabled) return;
+                  if (_isListening) {
+                    _stopListening();
+                  } else {
+                    _startListening();
+                  }
                 },
                 child: CircleAvatar(
                   backgroundColor: _isListening ? Colors.red : const Color(0xFF92080F),

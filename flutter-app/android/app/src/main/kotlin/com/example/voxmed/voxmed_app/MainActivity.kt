@@ -1,4 +1,4 @@
-package com.example.robomunch.robomunch_app
+package com.example.voxmed.voxmed_app
 
 import io.flutter.embedding.android.FlutterActivity
 
