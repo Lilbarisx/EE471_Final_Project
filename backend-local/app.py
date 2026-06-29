@@ -160,7 +160,10 @@ class VoxMedEngine:
                 messages=[
                     {"role": "system", "content": system_instructions},
                     {"role": "user", "content": user_prompt}
-                ]
+                ],
+                options={
+                    "temperature": 0.0
+                }
             )
             content = response['message']['content'].strip()
             
@@ -228,7 +231,10 @@ class VoxMedEngine:
         try:
             response = ollama.chat(
                 model='gemma4:e2b',
-                messages=chat_flow
+                messages=chat_flow,
+                options={
+                    "temperature": 0.2
+                }
             )
             response_text = response['message']['content'].strip()
             
