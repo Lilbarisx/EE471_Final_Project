@@ -35,5 +35,8 @@ jobs:
             sudo docker-compose down
             sudo docker-compose up --build -d
             
+            # Run migrations inside the container
+            sudo docker-compose exec -T web python manage.py migrate
+            
             # Print logs to verify container is running
             sudo docker-compose ps
