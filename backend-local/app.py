@@ -106,6 +106,12 @@ class VoxMedEngine:
             return f"Transcription error: {e}"
 
     def analyze_safety(self, scanned_text, allergies, medications):
+        print(f"\n--- [BACKEND] ANALYZE SAFETY REQUEST ---")
+        print(f"Allergies input: '{allergies}'")
+        print(f"Medications input: '{medications}'")
+        print(f"Scanned text: '{scanned_text}'")
+        print(f"----------------------------------------\n")
+
         if not scanned_text:
             return {"safe": True, "explanation": "Okunacak metin bulunamadı."}
             
@@ -120,13 +126,13 @@ class VoxMedEngine:
             }
             
         system_instructions = (
-            "Sen VoxMed adında profesyonel bir Alerji ve Besin Öğeleri Kontrol Asistanısın. Görevin, sana beslenecek olan ham OCR çıktısını analiz etmek, metindeki alerjenleri ve besin değerlerini kullanıcının sağlığı için doğrulamaktır.\n\n"
-            "Süreci şu 4 adıma göre yürüt:\n"
+            "Sen VoxMed adında profesyonel bir Alerji ve Besin Öğeleri Kontrol Asistanısın. Görevin, sana beslenecek olan ham OCR çıktısını analiz etmek, metindeki alerjenleri, kullanılan ilaçlarla etkileşimleri ve besin değerlerini kullanıcının sağlığı için doğrulamaktır.\n\n"
+            "Süreci şu 5 adıma göre yürüt:\n"
             "1. OCR ve Türkçe Karakter Restorasyonu: Sana gelen metin ham bir OCR çıktısı olduğu için bozuk karakterler, eksik harfler ve bitişik kelimeler içerebilir. Öncelikle bağlama göre bu hataları zihninde düzelt (örn: 'kvam artnci' -> 'kıvam arttırıcı', 'aroma veric (ilek)' -> 'aroma verici (çilek)', 'pancar șekeri' -> 'pancar şekeri', 'ya9' -> 'yağ'). Yanıtlarında ve analizinde her zaman bu kelimelerin düzeltilmiş, temiz Türkçe hallerini kullan. Eğer diğer dillerde de içerik varsa onları da içindekiler belirlemede kullanabilirsin. Çıktı yine Türkçe şekilde olsun.\n"
-            "2. Alerjen Kontrolü: Düzeltilen içerik listesini, kullanıcının aktif alerjen listesiyle karşılaştır. Net eşleşmelerin yanı sıra, bu alerjenlerin tüm türevlerini ve gizli kaynaklarını da (örn: süt yerine süt tozu, peynir altı suyu, kazein; kakao yerine kakao kitlesi, kakao yağı; gluten yerine buğday unu, nişasta) titizlikle tespit et.\n"
-            "ÇOK ÖNEMLİ KURAL: YALNIZCA KULLANICININ AKTİF ALERJEN LİSTESİNDE YER ALAN MADDELER (veya türevleri) ÜRÜNDE VARSA ürünü tehlikeli ('safe': false) yapmalı ve uyarmalısın. Kullanıcının aktif alerjen listesinde yer almayan diğer genel alerjenler (örn: kullanıcı süt alerjisi belirtmediyse süt, gluten belirtmediyse buğday) ürünün içinde olsa dahi ürünü KULLANICI İÇİN TAMAMEN GÜVENLİ (safe: true) kabul etmelisin. Kendiliğinden genel alerji uyarıları yapıp 'tüketmeyin' uyarısı yapma. Güvenliği sadece kullanıcının listesine göre doğrula.\n"
-            "3. Besin Değerleri ve Matematiksel Mantık Kontrolü: OCR metni içindeki enerji, besin öğelerini ve bileşen oranlarını (yüzdelerini) ayıkla. Gıda etiketlerindeki toplam bileşen yüzdesi matematiksel olarak %100'ü geçemez. Eğer OCR çıktısında mantıksız yüzdeler (örn: '%159', '%200') veya bozuk sayılar görürsen, bunu bir OCR okuma hatası (örn: noktayı/virgülü kaçırma, %1.5 veya %15'i yanlış okuma) olduğunu fark et. Yanıtında kullanıcıya bu matematiksel mantıksızlığı/hatayı açıkla ve olası gerçek değeri şeklinde mantık yürüterek belirt.\n"
-            "4. Kesinlik ve Yanıt Kuralları:\n"
+            "2. Alerjen Kontrolü: Düzeltilen içerik listesini, kullanıcının aktif alerjen listesiyle karşılaştır. Net eşleşmelerin yanı sıra, bu alerjenlerin tüm türevlerini ve gizli kaynaklarını da (örn: süt yerine süt tozu, peynir altı suyu, kazein; kakao yerine kakao kitlesi, kakao yağı; gluten yerine buğday unu, nişasta) titizlikle tespit et. ÇÖK ÖNEMLİ KURAL: YALNIZCA KULLANICININ AKTİF ALERJEN LİSTESİNDE YER ALAN MADDELER (veya türevleri) ÜRÜNDE VARSA ürünü tehlikeli ('safe': false) yapmalı ve uyarmalısın. Kullanıcının aktif alerjen listesinde yer almayan diğer genel alerjenler ürünün içinde olsa dahi ürünü KULLANICI İÇİN TAMAMEN GÜVENLİ (safe: true) kabul etmelisin. Kendiliğinden genel alerji uyarıları yapıp 'tüketmeyin' uyarısı yapma. Güvenliği sadece kullanıcının listesine göre doğrula.\n"
+            "3. İlaç Etkileşimi Kontrolü: Düzeltilen içerik listesini, kullanıcının aktif ilaç listesiyle karşılaştır. İçerikteki maddelerin kullanıcının kullandığı ilaçlarla (örn: Warfarin ile kızılcık/ıspanak/yeşil çay gibi yüksek K vitamini veya etkileşimli maddeler; aspirin ile alkol; kolesterol ilaçları ile greyfurt vb.) bilinen klinik etkileşimlerini denetle. Eğer bir çakışma varsa kullanıcıyı açıkça uyar ve ürünü tehlikeli ('safe': false) olarak işaretle. Çakışma yoksa veya ilaç listesi boş ise bu adımı güvenli geç.\n"
+            "4. Besin Değerleri ve Matematiksel Mantık Kontrolü: OCR metni içindeki enerji, besin öğelerini ve bileşen oranlarını (yüzdelerini) ayıkla. Gıda etiketlerindeki toplam bileşen yüzdesi matematiksel olarak %100'ü geçemez. Eğer OCR çıktısında mantıksız yüzdeler (örn: '%159', '%200') veya bozuk sayılar görürsen, bunu bir OCR okuma hatası (örn: noktayı/virgülü kaçırma, %1.5 veya %15'i yanlış okuma) olduğunu fark et. Yanıtında kullanıcıya bu matematiksel mantıksızlığı/hatayı açıklayıp olası gerçek değeri şeklinde mantık yürüterek belirt.\n"
+            "5. Kesinlik ve Yanıt Kuralları:\n"
             "- Son derece kesin (precise), öz, analitik ve net ol.\n"
             "- Gereksiz nezaket cümleleri veya uzatılmış paragraflar kullanma, doğrudan bulguları listele.\n"
             "- Sadece sana verilen OCR metnine sadık kal, metinde olmayan besin değerlerini veya içerikleri kendinden uydurma (halüsinasyon görme).\n"
@@ -167,6 +173,10 @@ class VoxMedEngine:
                     lines = lines[:-1]
                 content = "\n".join(lines).strip()
                 
+            print(f"\n--- [BACKEND] LLM RAW OUTPUT ---")
+            print(content)
+            print(f"--------------------------------\n")
+            
             result = json.loads(content)
             return {
                 "safe": bool(result.get("safe", True)),
