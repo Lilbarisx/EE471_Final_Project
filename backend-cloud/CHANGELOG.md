@@ -1,3 +1,10 @@
+## [1.1.2](https://github.com/Lilbarisx/EE471_Final_Project/compare/v1.1.1...v1.1.2) (2026-06-29)
+
+
+### Bug Fixes
+
+* explicit drug names in LLM system prompt examples to enforce attention ([a706ff4](https://github.com/Lilbarisx/EE471_Final_Project/commit/a706ff4a7d96c27eef4eba4e495fcc0e1d3430c8))
+
 ## [1.1.1](https://github.com/Lilbarisx/EE471_Final_Project/compare/v1.1.0...v1.1.1) (2026-06-29)
 
 
