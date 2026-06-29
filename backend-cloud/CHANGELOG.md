@@ -1,3 +1,10 @@
+## [1.1.1](https://github.com/Lilbarisx/EE471_Final_Project/compare/v1.1.0...v1.1.1) (2026-06-29)
+
+
+### Bug Fixes
+
+* set LLM temperature to 0.0 for safety analysis to guarantee deterministic decoding ([15a8cb5](https://github.com/Lilbarisx/EE471_Final_Project/commit/15a8cb516ea9273080edb858e7eecf55250c9888))
+
 # [1.1.0](https://github.com/Lilbarisx/EE471_Final_Project/compare/v1.0.2...v1.1.0) (2026-06-29)
 
 
